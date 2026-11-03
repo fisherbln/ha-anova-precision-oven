@@ -45,11 +45,23 @@ def cook_milestones(state: dict[str, Any]) -> dict[str, Any]:
     bulb = _get(state, "nodes", "temperatureBulbs", "mode") or "dry"
     current = _get(state, "nodes", "temperatureBulbs", bulb, "current", "celsius")
     setpoint = _get(state, "nodes", "temperatureBulbs", bulb, "setpoint", "celsius")
-    if (
-        current is not None
-        and setpoint is not None
-        and current >= setpoint - PREHEAT_TOLERANCE_CELSIUS
-    ):
+    cook = state.get("cook") if isinstance(state.get("cook"), dict) else {}
+    stages = cook.get("stages") if isinstance(cook.get("stages"), list) else []
+    active = next(
+        (s for s in stages if isinstance(s, dict) and s.get("id") == cook.get("activeStageId")),
+        None,
+    )
+    has_preheat = any(isinstance(s, dict) and s.get("type") == "preheat" for s in stages)
+    if has_preheat:
+        # The oven decides when preheating is done: it moves to the next stage.
+        preheated = active is not None and active.get("type") != "preheat"
+    else:
+        preheated = (
+            current is not None
+            and setpoint is not None
+            and current >= setpoint - PREHEAT_TOLERANCE_CELSIUS
+        )
+    if preheated:
         reached[EVENT_PREHEATED] = {
             "temperature_mode": bulb,
             "setpoint_celsius": setpoint,
@@ -65,10 +77,14 @@ def cook_milestones(state: dict[str, Any]) -> dict[str, Any]:
                 "setpoint_celsius": probe_target,
             }
 
+    # The timer counts down: it waits at `initial` ("idle") until its stage
+    # starts, then runs ("running") toward zero.
     timer = _get(state, "nodes", "timer") or {}
     initial = timer.get("initial") or 0
+    timer_mode = timer.get("mode")
     if initial > 0 and (
-        timer.get("mode") == "completed" or (timer.get("current") or 0) >= initial
+        timer_mode == "completed"
+        or (timer_mode not in (None, "idle") and timer.get("current") == 0)
     ):
         reached[EVENT_TIMER_FINISHED] = {"duration_seconds": initial}
 

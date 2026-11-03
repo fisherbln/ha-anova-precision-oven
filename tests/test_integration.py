@@ -105,9 +105,12 @@ async def test_cook_events_fire_once(hass, setup_oven):
     cooking["state"]["mode"] = "cook"
     cooking["cook"] = {
         "cookId": "c1",
-        "activeStageId": "s2",
+        "activeStageId": "s1",
         "secondsElapsed": 120,
-        "stages": [{"id": "s1", "type": "preheat"}, {"id": "s2", "type": "cook", "rackPosition": 4}],
+        "stages": [
+            {"id": "s1", "type": "preheat", "rackPosition": 4},
+            {"id": "s2", "type": "cook", "rackPosition": 4},
+        ],
     }
     cooking["nodes"]["temperatureBulbs"]["dry"]["setpoint"] = {"celsius": 180, "fahrenheit": 356}
     cooking["nodes"]["temperatureBulbs"]["dry"]["current"]["celsius"] = 120
@@ -116,11 +119,20 @@ async def test_cook_events_fire_once(hass, setup_oven):
     assert hass.states.get(event_id).state == "unknown"
     assert hass.states.get("sensor.anova_precision_oven_heating_power").state == "1800"
     assert hass.states.get("sensor.anova_precision_oven_cook_session").state == "c1"
-    assert hass.states.get("sensor.anova_precision_oven_active_stage").state == "2"
+    assert hass.states.get("sensor.anova_precision_oven_active_stage").state == "1"
     assert hass.states.get("sensor.anova_precision_oven_rack_position").state == "4"
     assert hass.states.get("sensor.anova_precision_oven_cook_time").state == "120"
 
+    # Within 1 °C of the setpoint but the oven is still in its preheat stage:
+    # not preheated yet (the oven decides, by moving to the next stage).
+    cooking["cook"]["activeStageId"] = "s1"
     cooking["nodes"]["temperatureBulbs"]["dry"]["current"]["celsius"] = 179.5
+    cooking["nodes"]["timer"] = {"mode": "idle", "initial": 120, "current": 120}
+    await push(cooking)
+    assert hass.states.get(event_id).state == "unknown"
+
+    cooking["cook"]["activeStageId"] = "s2"
+    cooking["nodes"]["timer"] = {"mode": "running", "initial": 120, "current": 107}
     await push(cooking)
     first = hass.states.get(event_id)
     assert first.attributes["event_type"] == "preheated"
@@ -136,6 +148,10 @@ async def test_cook_events_fire_once(hass, setup_oven):
     }
     await push(cooking)
     assert hass.states.get(event_id).attributes["event_type"] == "probe_target_reached"
+
+    cooking["nodes"]["timer"] = {"mode": "running", "initial": 120, "current": 0}
+    await push(cooking)
+    assert hass.states.get(event_id).attributes["event_type"] == "timer_finished"
 
     await push(idle_state())
     assert hass.states.get(event_id).attributes["event_type"] == "cook_ended"
