@@ -120,7 +120,7 @@ Both actions target the oven's climate entity and **replace any cook in progress
 | `duration` | none | Timer; can't combine with `probe_temperature` |
 | `preheat` | `true` | Adds a preheat stage; the cook stage and its timer start once preheated |
 | `wait_for_start` | `false` | After preheating, wait for a tap on the oven before cooking |
-| `stop_when_done` | `true` | Turn the oven off when the timer ends. The oven itself keeps holding temperature after its timer, so Home Assistant sends the stop (it must be running then) |
+| `stop_when_done` | `false` | Turn the oven off when the timer ends. The oven itself keeps holding temperature after its timer, so Home Assistant sends the stop (it must be running then) |
 | `title` | `""` | |
 
 ```yaml

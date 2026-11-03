@@ -363,7 +363,7 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
         except CookValidationError as err:
             raise ServiceValidationError(str(err)) from err
         await self._async_send_stages(stages)
-        if duration and kwargs.get(ATTR_STOP_WHEN_DONE, True):
+        if duration and kwargs.get(ATTR_STOP_WHEN_DONE, False):
             self.coordinator.stop_when_timer_done.add(self._device_id)
 
     async def async_start_custom_cook(self, **kwargs: Any) -> None:

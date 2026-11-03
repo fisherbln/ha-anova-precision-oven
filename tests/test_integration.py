@@ -223,10 +223,21 @@ async def test_stop_when_done(hass, setup_oven, stop_when_done, expect_stop):
     assert bool(stops) is expect_stop
 
 
-async def test_new_cook_cancels_pending_stop(hass, setup_oven):
+async def test_stop_when_done_is_off_by_default(hass, setup_oven):
     _, coordinator, _, _ = setup_oven
     await hass.services.async_call(
         DOMAIN, "start_cook", {"entity_id": CLIMATE, "temperature": 150, "duration": 60}, blocking=True
+    )
+    assert not coordinator.stop_when_timer_done
+
+
+async def test_new_cook_cancels_pending_stop(hass, setup_oven):
+    _, coordinator, _, _ = setup_oven
+    await hass.services.async_call(
+        DOMAIN,
+        "start_cook",
+        {"entity_id": CLIMATE, "temperature": 150, "duration": 60, "stop_when_done": True},
+        blocking=True,
     )
     assert coordinator.stop_when_timer_done
     await hass.services.async_call(

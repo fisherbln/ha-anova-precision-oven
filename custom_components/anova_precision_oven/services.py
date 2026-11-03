@@ -67,7 +67,7 @@ START_COOK_SCHEMA = {
     vol.Exclusive(ATTR_DURATION, "target"): cv.positive_time_period,
     vol.Optional(ATTR_PREHEAT, default=True): cv.boolean,
     vol.Optional(ATTR_WAIT_FOR_START, default=False): cv.boolean,
-    vol.Optional(ATTR_STOP_WHEN_DONE, default=True): cv.boolean,
+    vol.Optional(ATTR_STOP_WHEN_DONE, default=False): cv.boolean,
     vol.Optional(ATTR_TITLE, default=""): cv.string,
 }
 
