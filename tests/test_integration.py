@@ -38,7 +38,7 @@ async def test_start_cook_sends_v1_payload_in_fahrenheit(hass, setup_oven):
             "temperature": 350,
             "heating_elements": ["top", "rear"],
             "fan_speed": 60,
-            "steam": 20,
+            "steam": 20,  # with steam the fan is locked at 100
             "rack_position": 2,
             "duration": {"minutes": 25},
         },
@@ -264,7 +264,7 @@ async def test_set_temperature_while_cooking_keeps_the_cook(hass, setup_oven):
 
     _, _, ws, push = setup_oven
     stages = build_cook_stages(
-        temperature_c=150, heating_elements=["bottom", "rear"], fan_speed=40, duration_s=600
+        temperature_c=150, heating_elements=["top", "bottom"], fan_speed=40, duration_s=600
     )
     state = idle_state()
     state["state"]["mode"] = "cook"

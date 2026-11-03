@@ -28,7 +28,7 @@ def test_roast_with_preheat_and_timer():
         "bottom": {"on": False},
         "rear": {"on": True},
     }
-    assert cook["fan"] == {"speed": 80}
+    assert cook["fan"] == {"speed": 100}  # rear element locks the fan
     assert cook["stepType"] == "stage"
     assert cook["stageTransitionType"] == "automatic"
     assert cook["timerAdded"] is True and cook["timer"] == {"initial": 1800}
@@ -98,7 +98,7 @@ def test_retarget_keeps_settings_and_follows_preheat():
     from custom_components.anova_precision_oven.cook import retarget_stages
 
     stages = build_cook_stages(
-        temperature_c=150, heating_elements=["top", "rear"], fan_speed=60, steam=20, duration_s=600
+        temperature_c=150, heating_elements=["top", "bottom"], fan_speed=60, duration_s=600
     )
     preheat, cook = stages
     out = retarget_stages(stages, preheat["id"], 200)
@@ -107,7 +107,7 @@ def test_retarget_keeps_settings_and_follows_preheat():
         assert stage["temperatureBulbs"]["dry"]["setpoint"]["celsius"] == 200
         assert stage["heatingElements"] == cook["heatingElements"]
         assert stage["fan"] == {"speed": 60}
-        assert stage["steamGenerators"]["steamPercentage"] == {"setpoint": 20}
+        assert "steamGenerators" not in stage
     assert out[1]["timer"] == {"initial": 600}
     # the input isn't modified
     assert stages[0]["temperatureBulbs"]["dry"]["setpoint"]["celsius"] == 150
@@ -131,3 +131,20 @@ def test_retarget_limits_and_unknown_stage():
     with pytest.raises(CookValidationError):
         retarget_stages(sv, sv[0]["id"], 120)
     assert retarget_stages(sv, "missing", 60) is None
+
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "fan"),
+    [
+        ({"heating_elements": ["top", "bottom"], "fan_speed": 40}, 40),
+        ({"heating_elements": ["top", "rear"], "fan_speed": 40}, 100),
+        ({"heating_elements": ["top"], "fan_speed": 40, "steam": 10}, 100),
+        ({"heating_elements": ["bottom"], "fan_speed": 40, "steam": 0}, 40),
+        ({"heating_elements": ["top"], "fan_speed": 40, "mode": "sous_vide"}, 100),
+    ],
+)
+def test_fan_locked_high_with_rear_or_steam(kwargs, fan):
+    temp = 60 if kwargs.get("mode") == "sous_vide" else 150
+    (cook,) = build_cook_stages(temperature_c=temp, preheat=False, **kwargs)
+    assert cook["fan"] == {"speed": fan}

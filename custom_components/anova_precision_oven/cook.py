@@ -60,6 +60,8 @@ def build_cook_stages(
       only starts once the oven is up to temperature.
     - wait_for_start makes the oven wait for a tap on the oven after
       preheating before it starts the cook stage.
+    - fan_speed only applies with top/bottom elements and no steam; the rear
+      element or any steam locks the fan at 100, as in the Anova app.
     """
     elements = {e.lower() for e in heating_elements}
     if unknown := elements - set(HEATING_ELEMENTS):
@@ -94,6 +96,11 @@ def build_cook_stages(
         raise CookValidationError("Fan speed must be 0-100")
     if steam is not None and not 0 <= steam <= 100:
         raise CookValidationError("Steam must be 0-100")
+
+    # Like the Anova app: the fan is locked on high with the rear element or
+    # any steam (sous vide always uses the steam generators).
+    if "rear" in elements or wet or steam:
+        fan_speed = 100
 
     bulb = "wet" if wet else "dry"
     base: dict[str, Any] = {

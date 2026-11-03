@@ -103,7 +103,7 @@ Both actions target the oven's climate entity and **replace any cook in progress
 | `temperature` | required | Dry: 77–482 °F / 25–250 °C (356 °F / 180 °C max with only the bottom element). Sous vide: up to 212 °F / 100 °C |
 | `mode` | `dry` | `dry` or `sous_vide` (wet bulb) |
 | `heating_elements` | `[rear]` | Any of `top`, `bottom`, `rear`; at least one |
-| `fan_speed` | `100` | 0–100 % |
+| `fan_speed` | `100` | 0–100 %. Only applies with top/bottom elements and no steam: the rear element or any steam locks the fan at 100 %, as in the Anova app |
 | `steam` | none | Dry: steam percentage. Sous vide: relative humidity (default 100) |
 | `vent_open` | `false` | |
 | `rack_position` | `3` | 1–5 |
