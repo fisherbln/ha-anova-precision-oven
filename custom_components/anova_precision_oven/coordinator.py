@@ -15,6 +15,7 @@ from websockets.exceptions import WebSocketException
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
@@ -22,6 +23,8 @@ from .const import (
     DOMAIN,
     EVENT_APO_STATE,
     EVENT_APO_WIFI_LIST,
+    RESPONSE,
+    RESPONSE_TIMEOUT,
     WS_ENDPOINT,
     WS_MAX_MESSAGE_SIZE,
     WS_RECONNECT_DELAY,
@@ -41,6 +44,9 @@ _INTEGRATION_LOGGER_NAMES = (
     "custom_components.anova_precision_oven.switch",
     "custom_components.anova_precision_oven.entity",
     "custom_components.anova_precision_oven.diagnostics",
+    "custom_components.anova_precision_oven.cook",
+    "custom_components.anova_precision_oven.event",
+    "custom_components.anova_precision_oven.services",
 )
 
 
@@ -94,6 +100,7 @@ class AnovaOvenCoordinator(DataUpdateCoordinator):
         self._running = False
         self._listen_task = None
         self._ssl_context: ssl.SSLContext | None = None
+        self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
         self._log_filter = _TokenRedactFilter(token)
         for name in _INTEGRATION_LOGGER_NAMES:
@@ -172,15 +179,16 @@ class AnovaOvenCoordinator(DataUpdateCoordinator):
                     _LOGGER.error("WebSocket connection timed out after 15 seconds")
                     await asyncio.sleep(WS_RECONNECT_DELAY)
                     continue
-                except websockets.exceptions.InvalidStatusCode as err:
+                except websockets.exceptions.InvalidStatus as err:
+                    status_code = err.response.status_code
                     _LOGGER.error(
                         "WebSocket connection rejected with status %s",
-                        err.status_code,
+                        status_code,
                     )
-                    if err.status_code in (401, 403):
+                    if status_code in (401, 403):
                         _LOGGER.error(
                             "Authentication failed (%s) -- check your token",
-                            err.status_code,
+                            status_code,
                         )
                     await asyncio.sleep(WS_RECONNECT_DELAY)
                     continue
@@ -234,6 +242,10 @@ class AnovaOvenCoordinator(DataUpdateCoordinator):
             command = data.get("command")
             if not command:
                 _LOGGER.debug("Received message without command field")
+                return
+
+            if command == RESPONSE or command.startswith(f"{RESPONSE}_"):
+                self._handle_response(data)
                 return
 
             if command == EVENT_APO_WIFI_LIST:
@@ -301,10 +313,28 @@ class AnovaOvenCoordinator(DataUpdateCoordinator):
             )
             _LOGGER.debug("Message handling error details", exc_info=True)
 
+    def _handle_response(self, data: dict[str, Any]) -> None:
+        """Resolve the pending command a RESPONSE message answers."""
+        _LOGGER.debug("Command response: %s", data)
+        request_id = data.get("requestId")
+        future = self._pending.get(request_id) if request_id else None
+        if future is None and len(self._pending) == 1:
+            # Response without a requestId we know: only one command is in
+            # flight, so it must be the answer to that one.
+            future = next(iter(self._pending.values()))
+        if future is not None and not future.done():
+            payload = data.get("payload")
+            future.set_result(payload if isinstance(payload, dict) else {})
+
     async def send_command(
         self, device_id: str, command: str, payload: dict[str, Any] | None = None
     ) -> None:
-        """Send a command to a device."""
+        """Send a command to a device and check the oven's response.
+
+        Raises HomeAssistantError if the oven rejects the command. If no
+        response arrives within RESPONSE_TIMEOUT the command is assumed to
+        have gone through (not every command is answered).
+        """
         if not self.websocket:
             raise UpdateFailed("WebSocket not connected")
 
@@ -317,9 +347,10 @@ class AnovaOvenCoordinator(DataUpdateCoordinator):
         if payload is not None and not isinstance(payload, dict):
             raise UpdateFailed("Invalid payload format")
 
+        request_id = str(uuid.uuid4())
         message = {
             "command": command,
-            "requestId": str(uuid.uuid4()),
+            "requestId": request_id,
             "payload": {
                 "id": device_id,
                 "type": command,
@@ -329,9 +360,18 @@ class AnovaOvenCoordinator(DataUpdateCoordinator):
         if payload:
             message["payload"]["payload"] = payload
 
+        future: asyncio.Future[dict[str, Any]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._pending[request_id] = future
         try:
             await self.websocket.send(json.dumps(message))
             _LOGGER.debug("Sent command %s to device %s", command, device_id)
+            try:
+                response = await asyncio.wait_for(future, RESPONSE_TIMEOUT)
+            except asyncio.TimeoutError:
+                _LOGGER.debug("No response to %s within %ss", command, RESPONSE_TIMEOUT)
+                return
         except WebSocketException as err:
             _LOGGER.error(
                 "Failed to send command %s: %s", command, type(err).__name__
@@ -348,6 +388,13 @@ class AnovaOvenCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(
                 f"Unexpected error: {type(err).__name__}"
             ) from err
+        finally:
+            self._pending.pop(request_id, None)
+
+        status = str(response.get("status", "")).lower()
+        if status in ("error", "failed", "failure"):
+            error = response.get("error") or response.get("message") or response
+            raise HomeAssistantError(f"Oven rejected {command}: {error}")
 
     def get_device_state(self, device_id: str) -> dict[str, Any] | None:
         """Get device state by ID."""

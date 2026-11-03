@@ -69,20 +69,14 @@ class AnovaOvenLampSwitch(AnovaOvenEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the lamp."""
-        try:
-            await self.coordinator.send_command(
-                self._device_id, CMD_APO_SET_LAMP, {"on": True}
-            )
-            await self.coordinator.async_request_refresh()
-        except Exception as err:
-            _LOGGER.error("Failed to turn on lamp: %s", err)
+        await self.coordinator.send_command(
+            self._device_id, CMD_APO_SET_LAMP, {"on": True}
+        )
+        await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the lamp."""
-        try:
-            await self.coordinator.send_command(
-                self._device_id, CMD_APO_SET_LAMP, {"on": False}
-            )
-            await self.coordinator.async_request_refresh()
-        except Exception as err:
-            _LOGGER.error("Failed to turn off lamp: %s", err)
+        await self.coordinator.send_command(
+            self._device_id, CMD_APO_SET_LAMP, {"on": False}
+        )
+        await self.coordinator.async_request_refresh()

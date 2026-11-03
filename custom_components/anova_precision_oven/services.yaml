@@ -1,0 +1,95 @@
+start_cook:
+  target:
+    entity:
+      integration: anova_precision_oven
+      domain: climate
+  fields:
+    temperature:
+      required: true
+      example: 350
+      selector:
+        number:
+          min: 25
+          max: 482
+          step: 1
+          mode: box
+    mode:
+      default: dry
+      selector:
+        select:
+          options:
+            - label: Dry
+              value: dry
+            - label: Sous vide
+              value: sous_vide
+    heating_elements:
+      default:
+        - rear
+      selector:
+        select:
+          multiple: true
+          options:
+            - label: Top
+              value: top
+            - label: Bottom
+              value: bottom
+            - label: Rear
+              value: rear
+    fan_speed:
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+    steam:
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+    vent_open:
+      default: false
+      selector:
+        boolean:
+    rack_position:
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 5
+          step: 1
+    probe_temperature:
+      selector:
+        number:
+          min: 1
+          max: 212
+          step: 1
+          mode: box
+    duration:
+      selector:
+        duration:
+    preheat:
+      default: true
+      selector:
+        boolean:
+    wait_for_start:
+      default: false
+      selector:
+        boolean:
+    title:
+      selector:
+        text:
+
+start_custom_cook:
+  target:
+    entity:
+      integration: anova_precision_oven
+      domain: climate
+  fields:
+    stages:
+      required: true
+      selector:
+        object:

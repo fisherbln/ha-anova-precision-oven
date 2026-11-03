@@ -14,6 +14,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     PERCENTAGE,
+    UnitOfPower,
     UnitOfTemperature,
     UnitOfTime,
 )
@@ -37,6 +38,59 @@ def _get_nested(state: dict, *keys: str, default: Any = None) -> Any:
         if current is None:
             return default
     return current
+
+
+def _cook(state: dict[str, Any]) -> dict[str, Any]:
+    """Return the running cook's data.
+
+    The oven reports the cook under "cook" (absent when idle); fall back to
+    the top level for compatibility with older payloads.
+    """
+    cook = state.get("cook")
+    return cook if isinstance(cook, dict) else state
+
+
+def _stages(state: dict[str, Any]) -> list[dict[str, Any]]:
+    stages = _cook(state).get("stages")
+    return stages if isinstance(stages, list) else []
+
+
+def _active_stage(state: dict[str, Any]) -> tuple[int | None, dict[str, Any]]:
+    """Return (1-based index, stage) of the active stage."""
+    active_id = _cook(state).get("activeStageId")
+    for index, stage in enumerate(_stages(state), start=1):
+        if isinstance(stage, dict) and stage.get("id") == active_id:
+            return index, stage
+    return None, {}
+
+
+def _watts(state: dict[str, Any], *path: str) -> int:
+    value = _get_nested(state, "nodes", *path, "watts")
+    return value if isinstance(value, (int, float)) else 0
+
+
+def _total_watts(state: dict[str, Any]) -> int | None:
+    if not isinstance(_get_nested(state, "nodes", "heatingElements"), dict):
+        return None
+    return sum(
+        (
+            _watts(state, "heatingElements", "top"),
+            _watts(state, "heatingElements", "bottom"),
+            _watts(state, "heatingElements", "rear"),
+            _watts(state, "steamGenerators", "evaporator"),
+            _watts(state, "steamGenerators", "boiler"),
+        )
+    )
+
+
+def _rack_position(state: dict[str, Any]) -> Any:
+    if state.get("rackPosition") is not None:
+        return state["rackPosition"]
+    _, stage = _active_stage(state)
+    if stage.get("rackPosition") is not None:
+        return stage["rackPosition"]
+    stages = _stages(state)
+    return stages[0].get("rackPosition") if stages else None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -140,6 +194,7 @@ SENSOR_DESCRIPTIONS: tuple[AnovaOvenSensorDescription, ...] = (
         extra_attrs_fn=lambda s: {
             "mode": _get_nested(s, "nodes", "timer", "mode"),
             "initial": _get_nested(s, "nodes", "timer", "initial"),
+            "start_type": _get_nested(s, "nodes", "timer", "startType"),
         },
     ),
     AnovaOvenSensorDescription(
@@ -209,13 +264,7 @@ SENSOR_DESCRIPTIONS: tuple[AnovaOvenSensorDescription, ...] = (
         key="rack_position",
         name="Rack position",
         icon="mdi:grid",
-        value_fn=lambda s: (
-            s.get("rackPosition")
-            if s.get("rackPosition") is not None
-            else _get_nested(s, "stages", default=[{}])[0].get("rackPosition")
-            if isinstance(s.get("stages"), list) and s.get("stages")
-            else None
-        ),
+        value_fn=_rack_position,
     ),
     AnovaOvenSensorDescription(
         key="timer_start_type",
@@ -266,18 +315,75 @@ SENSOR_DESCRIPTIONS: tuple[AnovaOvenSensorDescription, ...] = (
         key="cook_session",
         name="Cook session",
         icon="mdi:chef-hat",
-        value_fn=lambda s: s.get("cookId") or "idle",
+        value_fn=lambda s: _cook(s).get("cookId") or "idle",
         extra_attrs_fn=lambda s: {
             k: v
             for k, v in {
-                "origin_source": s.get("originSource"),
-                "cook_type": s.get("type"),
-                "stage_count": len(s.get("stages", []))
-                if s.get("stages")
-                else None,
+                "origin_source": _cook(s).get("originSource"),
+                "cook_type": _cook(s).get("type"),
+                "stage_count": len(_stages(s)) or None,
+                "stages": _stages(s) or None,
             }.items()
             if v is not None
         },
+    ),
+    AnovaOvenSensorDescription(
+        key="active_stage",
+        name="Active stage",
+        icon="mdi:format-list-numbered",
+        value_fn=lambda s: _active_stage(s)[0],
+        extra_attrs_fn=lambda s: {
+            "stage_count": len(_stages(s)),
+            "stage_type": _active_stage(s)[1].get("type"),
+            "stage_title": _active_stage(s)[1].get("title") or None,
+        },
+    ),
+    AnovaOvenSensorDescription(
+        key="cook_elapsed",
+        name="Cook time",
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        value_fn=lambda s: _cook(s).get("secondsElapsed")
+        if _get_nested(s, "state", "mode") not in (None, "idle")
+        else 0,
+    ),
+    AnovaOvenSensorDescription(
+        key="steam_mode",
+        name="Steam mode",
+        icon="mdi:kettle-steam",
+        value_fn=lambda s: _get_nested(s, "nodes", "steamGenerators", "mode"),
+        extra_attrs_fn=lambda s: {
+            "steam_percentage_setpoint": _get_nested(
+                s, "nodes", "steamGenerators", "steamPercentage", "setpoint"
+            ),
+        },
+    ),
+    AnovaOvenSensorDescription(
+        key="power",
+        name="Heating power",
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        value_fn=_total_watts,
+    ),
+    *(
+        AnovaOvenSensorDescription(
+            key=f"{part}_power",
+            name=f"{label} power",
+            device_class=SensorDeviceClass.POWER,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfPower.WATT,
+            entity_registry_enabled_default=False,
+            value_fn=lambda s, path=path: _get_nested(s, "nodes", *path, "watts"),
+        )
+        for part, label, path in (
+            ("top", "Top element", ("heatingElements", "top")),
+            ("bottom", "Bottom element", ("heatingElements", "bottom")),
+            ("rear", "Rear element", ("heatingElements", "rear")),
+            ("evaporator", "Evaporator", ("steamGenerators", "evaporator")),
+            ("boiler", "Boiler", ("steamGenerators", "boiler")),
+        )
     ),
 )
 
@@ -350,6 +456,8 @@ class AnovaOvenSensor(AnovaOvenEntity, SensorEntity):
     """Sensor entity for Anova Precision Oven."""
 
     entity_description: AnovaOvenSensorDescription
+    # Raw stages can be large; keep them out of the recorder.
+    _unrecorded_attributes = frozenset({"stages"})
 
     def __init__(
         self,

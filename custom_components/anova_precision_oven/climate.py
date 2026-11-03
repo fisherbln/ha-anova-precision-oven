@@ -13,11 +13,26 @@ from homeassistant.components.climate import (
 )
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util.unit_conversion import TemperatureConverter
 
 from .const import (
+    ATTR_DURATION,
+    ATTR_FAN_SPEED,
+    ATTR_HEATING_ELEMENTS,
+    ATTR_MODE,
+    ATTR_PREHEAT,
+    ATTR_PROBE_TEMPERATURE,
+    ATTR_RACK_POSITION,
+    ATTR_STAGES,
+    ATTR_STEAM,
+    ATTR_TITLE,
+    ATTR_VENT_OPEN,
+    ATTR_WAIT_FOR_START,
     CMD_APO_START,
     CMD_APO_STOP,
+    COOK_MODE_DRY,
     DEFAULT_FAN_SPEED,
     DEFAULT_HUMIDITY,
     DEFAULT_TEMPERATURE_CELSIUS,
@@ -25,6 +40,12 @@ from .const import (
     OVEN_TYPE_V2,
     TEMP_MAX_CELSIUS,
     TEMP_MIN_CELSIUS,
+)
+from .cook import (
+    CookValidationError,
+    build_cook_stages,
+    build_start_payload,
+    prepare_custom_stages,
 )
 from .coordinator import AnovaOvenConfigEntry, AnovaOvenCoordinator
 from .entity import AnovaOvenEntity
@@ -220,11 +241,8 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
 
     async def _async_turn_off(self) -> None:
         """Stop cooking."""
-        try:
-            await self.coordinator.send_command(self._device_id, CMD_APO_STOP)
-            await self.coordinator.async_request_refresh()
-        except Exception as err:
-            _LOGGER.error("Failed to stop oven: %s", err)
+        await self.coordinator.send_command(self._device_id, CMD_APO_STOP)
+        await self.coordinator.async_request_refresh()
 
     async def _async_start_cook(self, temperature: float) -> None:
         """Start cooking with specified temperature.
@@ -241,13 +259,8 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
 
         payload = self._create_cook_payload(temperature, device_type)
 
-        try:
-            await self.coordinator.send_command(
-                self._device_id, CMD_APO_START, payload
-            )
-            await self.coordinator.async_request_refresh()
-        except Exception as err:
-            _LOGGER.error("Failed to start oven: %s", err)
+        await self.coordinator.send_command(self._device_id, CMD_APO_START, payload)
+        await self.coordinator.async_request_refresh()
 
     def _create_cook_payload(
         self, temperature: float, device_type: str
@@ -298,3 +311,59 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
             payload["cookerId"] = self._device_id
 
         return payload
+
+    # --- Entity services -------------------------------------------------
+
+    def _device_type(self) -> str:
+        device_info = self.coordinator.get_device_info(self._device_id)
+        return device_info.get("type", OVEN_TYPE_V1) if device_info else OVEN_TYPE_V1
+
+    def _to_celsius(self, value: float | None) -> float | None:
+        """Convert a service temperature (in HA's unit system) to Celsius."""
+        if value is None:
+            return None
+        return TemperatureConverter.convert(
+            value, self.hass.config.units.temperature_unit, UnitOfTemperature.CELSIUS
+        )
+
+    async def _async_send_stages(self, stages: list[dict[str, Any]]) -> None:
+        payload = build_start_payload(stages, self._device_id, self._device_type())
+        await self.coordinator.send_command(self._device_id, CMD_APO_START, payload)
+        await self.coordinator.async_request_refresh()
+
+    async def async_start_cook(self, **kwargs: Any) -> None:
+        """Start a cook with full control over the oven's settings."""
+        if self._device_type() == OVEN_TYPE_V2:
+            raise ServiceValidationError(
+                "start_cook builds v1 stages; on an Anova Precision Oven v2 use "
+                "start_custom_cook with v2 stages"
+            )
+        duration = kwargs.get(ATTR_DURATION)
+        try:
+            stages = build_cook_stages(
+                temperature_c=self._to_celsius(kwargs[ATTR_TEMPERATURE]),
+                mode=kwargs.get(ATTR_MODE, COOK_MODE_DRY),
+                heating_elements=kwargs.get(ATTR_HEATING_ELEMENTS, ["rear"]),
+                fan_speed=kwargs.get(ATTR_FAN_SPEED, 100),
+                steam=kwargs.get(ATTR_STEAM),
+                vent_open=kwargs.get(ATTR_VENT_OPEN, False),
+                rack_position=int(kwargs.get(ATTR_RACK_POSITION, 3)),
+                probe_temperature_c=self._to_celsius(
+                    kwargs.get(ATTR_PROBE_TEMPERATURE)
+                ),
+                duration_s=int(duration.total_seconds()) if duration else None,
+                preheat=kwargs.get(ATTR_PREHEAT, True),
+                wait_for_start=kwargs.get(ATTR_WAIT_FOR_START, False),
+                title=kwargs.get(ATTR_TITLE, ""),
+            )
+        except CookValidationError as err:
+            raise ServiceValidationError(str(err)) from err
+        await self._async_send_stages(stages)
+
+    async def async_start_custom_cook(self, **kwargs: Any) -> None:
+        """Start a cook from raw stages (e.g. copied from the cook session sensor)."""
+        try:
+            stages = prepare_custom_stages(kwargs[ATTR_STAGES])
+        except CookValidationError as err:
+            raise ServiceValidationError(str(err)) from err
+        await self._async_send_stages(stages)

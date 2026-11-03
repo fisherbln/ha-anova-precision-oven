@@ -17,5 +17,71 @@
     "abort": {
       "already_configured": "Device is already configured"
     }
+  },
+  "services": {
+    "start_cook": {
+      "name": "Start cook",
+      "description": "Start a cook with full control: sous vide or dry, heating elements, fan, steam, vent, rack, and a probe target or timer. Replaces any cook in progress.",
+      "fields": {
+        "temperature": {
+          "name": "Temperature",
+          "description": "Oven temperature, in your Home Assistant temperature unit. Dry: 77–482 °F (25–250 °C), 356 °F (180 °C) max with only the bottom element. Sous vide: up to 212 °F (100 °C)."
+        },
+        "mode": {
+          "name": "Mode",
+          "description": "Dry heats on the dry bulb. Sous vide holds the wet bulb temperature with humidity."
+        },
+        "heating_elements": {
+          "name": "Heating elements",
+          "description": "Which elements to use. At least one."
+        },
+        "fan_speed": {
+          "name": "Fan speed",
+          "description": "Convection fan speed, 0–100%."
+        },
+        "steam": {
+          "name": "Steam",
+          "description": "Steam percentage in dry mode (0 = none). Relative humidity in sous vide mode (default 100)."
+        },
+        "vent_open": {
+          "name": "Vent open",
+          "description": "Open the vent (e.g. for crisping)."
+        },
+        "rack_position": {
+          "name": "Rack position",
+          "description": "Rack position 1–5, as shown in the Anova app."
+        },
+        "probe_temperature": {
+          "name": "Probe target",
+          "description": "Food probe target, in your Home Assistant temperature unit. Can't be combined with a timer."
+        },
+        "duration": {
+          "name": "Timer",
+          "description": "Cook timer. Starts once preheated when preheat is on. Can't be combined with a probe target."
+        },
+        "preheat": {
+          "name": "Preheat",
+          "description": "Add a preheat stage so the cook (and its timer) starts once the oven is at temperature."
+        },
+        "wait_for_start": {
+          "name": "Wait for start",
+          "description": "After preheating, wait for a tap on the oven before starting the cook stage (put the food in first). Needs preheat."
+        },
+        "title": {
+          "name": "Title",
+          "description": "Optional name for the cook."
+        }
+      }
+    },
+    "start_custom_cook": {
+      "name": "Start custom cook",
+      "description": "Start a cook from raw Anova stages, e.g. copied from the Cook session sensor's stages attribute after starting a recipe in the Anova app. Replaces any cook in progress.",
+      "fields": {
+        "stages": {
+          "name": "Stages",
+          "description": "List of stage objects (YAML or JSON)."
+        }
+      }
+    }
   }
 }
