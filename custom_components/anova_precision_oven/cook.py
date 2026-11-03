@@ -28,7 +28,7 @@ class CookValidationError(ValueError):
     """Raised when requested cook settings are outside what the oven accepts."""
 
 
-def _setpoint(celsius: float) -> dict[str, float]:
+def setpoint(celsius: float) -> dict[str, float]:
     """Return a setpoint with both units (v1 requires both)."""
     return {
         "celsius": round(celsius, 2),
@@ -103,7 +103,7 @@ def build_cook_stages(
         "userActionRequired": False,
         "temperatureBulbs": {
             "mode": bulb,
-            bulb: {"setpoint": _setpoint(temperature_c)},
+            bulb: {"setpoint": setpoint(temperature_c)},
         },
         "heatingElements": {e: {"on": e in elements} for e in HEATING_ELEMENTS},
         "fan": {"speed": fan_speed},
@@ -125,7 +125,7 @@ def build_cook_stages(
 
     if probe_temperature_c is not None:
         base["probeAdded"] = True
-        base["temperatureProbe"] = {"setpoint": _setpoint(probe_temperature_c)}
+        base["temperatureProbe"] = {"setpoint": setpoint(probe_temperature_c)}
 
     stages: list[dict[str, Any]] = []
     if preheat:
@@ -143,6 +143,58 @@ def build_cook_stages(
         cook["timer"] = {"initial": int(duration_s)}
     stages.append(cook)
     return stages
+
+
+def retarget_stages(
+    stages: list[dict[str, Any]],
+    active_stage_id: str | None,
+    temperature_c: float,
+    timer_remaining_s: int | None = None,
+) -> list[dict[str, Any]] | None:
+    """Return the rest of a running cook with a new temperature.
+
+    The oven has no "adjust" command, so a change is sent as a new cook made
+    of the active stage and the stages after it. The active stage gets the
+    new temperature, and so do later stages that shared its old setpoint
+    (a preheat and its cook stage, say); stages with their own temperatures
+    keep them. A running timer carries over its remaining time. Returns None
+    when the active stage can't be found.
+    """
+    index = next(
+        (
+            i
+            for i, stage in enumerate(stages)
+            if isinstance(stage, dict) and stage.get("id") == active_stage_id
+        ),
+        None,
+    )
+    if index is None:
+        return None
+
+    remaining = copy.deepcopy(stages[index:])
+
+    def bulb(stage: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        bulbs = stage.setdefault("temperatureBulbs", {"mode": "dry"})
+        mode = bulbs.get("mode", "dry")
+        return mode, bulbs.setdefault(mode, {})
+
+    mode, active_bulb = bulb(remaining[0])
+    old = (active_bulb.get("setpoint") or {}).get("celsius")
+    max_c = TEMP_MAX_WET_CELSIUS if mode == "wet" else TEMP_MAX_CELSIUS
+    if not TEMP_MIN_CELSIUS <= temperature_c <= max_c:
+        raise CookValidationError(
+            f"Temperature must be between {TEMP_MIN_CELSIUS} and {max_c} °C"
+        )
+
+    for position, stage in enumerate(remaining):
+        stage_mode, stage_bulb = bulb(stage)
+        current = (stage_bulb.get("setpoint") or {}).get("celsius")
+        if position == 0 or (stage_mode == mode and current == old):
+            stage_bulb["setpoint"] = setpoint(temperature_c)
+
+    if timer_remaining_s and isinstance(remaining[0].get("timer"), dict):
+        remaining[0]["timer"]["initial"] = int(timer_remaining_s)
+    return remaining
 
 
 def prepare_custom_stages(stages: list[dict[str, Any]]) -> list[dict[str, Any]]:

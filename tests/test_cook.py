@@ -92,3 +92,42 @@ def test_custom_stages_keep_ids_and_fill_missing():
     assert stages[1]["id"]
     with pytest.raises(CookValidationError):
         prepare_custom_stages([])
+
+
+def test_retarget_keeps_settings_and_follows_preheat():
+    from custom_components.anova_precision_oven.cook import retarget_stages
+
+    stages = build_cook_stages(
+        temperature_c=150, heating_elements=["top", "rear"], fan_speed=60, steam=20, duration_s=600
+    )
+    preheat, cook = stages
+    out = retarget_stages(stages, preheat["id"], 200)
+    assert [s["id"] for s in out] == [preheat["id"], cook["id"]]
+    for stage in out:
+        assert stage["temperatureBulbs"]["dry"]["setpoint"]["celsius"] == 200
+        assert stage["heatingElements"] == cook["heatingElements"]
+        assert stage["fan"] == {"speed": 60}
+        assert stage["steamGenerators"]["steamPercentage"] == {"setpoint": 20}
+    assert out[1]["timer"] == {"initial": 600}
+    # the input isn't modified
+    assert stages[0]["temperatureBulbs"]["dry"]["setpoint"]["celsius"] == 150
+
+
+def test_retarget_mid_cook_carries_timer_and_leaves_other_temps():
+    from custom_components.anova_precision_oven.cook import retarget_stages
+
+    first = build_cook_stages(temperature_c=150, preheat=False, duration_s=600)[0]
+    second = build_cook_stages(temperature_c=220, preheat=False)[0]
+    out = retarget_stages([first, second], first["id"], 160, timer_remaining_s=245)
+    assert out[0]["temperatureBulbs"]["dry"]["setpoint"]["celsius"] == 160
+    assert out[0]["timer"] == {"initial": 245}
+    assert out[1]["temperatureBulbs"]["dry"]["setpoint"]["celsius"] == 220
+
+
+def test_retarget_limits_and_unknown_stage():
+    from custom_components.anova_precision_oven.cook import retarget_stages
+
+    sv = build_cook_stages(temperature_c=57, mode="sous_vide", preheat=False)
+    with pytest.raises(CookValidationError):
+        retarget_stages(sv, sv[0]["id"], 120)
+    assert retarget_stages(sv, "missing", 60) is None

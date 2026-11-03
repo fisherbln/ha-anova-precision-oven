@@ -86,20 +86,11 @@ Lamp on/off.
 
 ## Climate Entity Behavior
 
-The climate entity is intentionally simple. Every `turn_on` or temperature change starts a **new single-stage cook** with these fixed parameters:
+The climate entity works like a thermostat for the oven (target step 5°):
 
-| Parameter | Value |
-|---|---|
-| Mode | Dry (no steam) |
-| Heating elements | Top on, Bottom off, Rear on |
-| Fan speed | 100% |
-| Humidity setpoint | 0% |
-| Vent | Closed |
-| Timer | None (indefinite) |
-
-`turn_off` sends `CMD_APO_STOP`.
-
-**Caveat:** if a multi-stage or steam cook is in progress (started from the Anova app), changing the HA climate target will **replace** it with the simple dry cook above. Anova's API has no "adjust current cook" command. Treat the climate entity as a "turn on to X" shortcut; use [`start_cook`](#anova_precision_ovenstart_cook) or [`start_custom_cook`](#anova_precision_ovenstart_custom_cook) for anything more.
+- **Off:** changing the target only stores it. Turning on starts a simple dry cook at that temperature (top + rear elements, fan 100%, no steam, no timer).
+- **Cooking:** changing the target re-sends the running cook with the new temperature, from the active stage on. Elements, fan, steam, vent and the remaining timer are kept; a preheat stage and the cook stage after it move together, while later stages with their own temperatures keep them. Anova's API has no "adjust" command, so this is a fresh cook as far as the oven is concerned (its cook ID changes).
+- `turn_off` sends `CMD_APO_STOP`.
 
 ## Actions
 

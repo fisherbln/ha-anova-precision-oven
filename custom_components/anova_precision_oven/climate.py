@@ -47,6 +47,7 @@ from .cook import (
     build_cook_stages,
     build_start_payload,
     prepare_custom_stages,
+    retarget_stages,
 )
 from .coordinator import AnovaOvenConfigEntry, AnovaOvenCoordinator
 from .entity import AnovaOvenEntity
@@ -101,7 +102,7 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
     _attr_min_temp = TEMP_MIN_CELSIUS
     _attr_max_temp = TEMP_MAX_CELSIUS
-    _attr_target_temperature_step = 1
+    _attr_target_temperature_step = 5
 
     def __init__(
         self,
@@ -111,6 +112,8 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
         """Initialize the climate entity."""
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_climate"
+        # Target chosen while the oven is off; used when it's turned on
+        self._pending_target: float | None = None
         self._attr_name = None
 
     @property
@@ -144,13 +147,8 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
         if not state:
             return None
 
-        return (
-            state.get("nodes", {})
-            .get("temperatureBulbs", {})
-            .get("dry", {})
-            .get("current", {})
-            .get("celsius")
-        )
+        bulbs = state.get("nodes", {}).get("temperatureBulbs", {})
+        return bulbs.get(bulbs.get("mode", "dry"), {}).get("current", {}).get("celsius")
 
     @property
     def target_temperature(self) -> float | None:
@@ -159,13 +157,10 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
         if not state:
             return None
 
-        return (
-            state.get("nodes", {})
-            .get("temperatureBulbs", {})
-            .get("dry", {})
-            .get("setpoint", {})
-            .get("celsius")
-        )
+        if self.hvac_mode == HVACMode.OFF and self._pending_target is not None:
+            return self._pending_target
+        bulbs = state.get("nodes", {}).get("temperatureBulbs", {})
+        return bulbs.get(bulbs.get("mode", "dry"), {}).get("setpoint", {}).get("celsius")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -220,9 +215,10 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
             return
 
         if self.hvac_mode == HVACMode.HEAT:
-            await self._async_start_cook(temperature)
+            await self._async_adjust_running_cook(temperature)
         else:
-            _LOGGER.warning("Cannot set temperature when oven is off")
+            self._pending_target = temperature
+            self.async_write_ha_state()
 
     async def async_turn_on(self) -> None:
         """Turn on the oven."""
@@ -239,6 +235,7 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
             target_temp = DEFAULT_TEMPERATURE_CELSIUS
 
         await self._async_start_cook(target_temp)
+        self._pending_target = None
 
     async def _async_turn_off(self) -> None:
         """Stop cooking."""
@@ -313,6 +310,28 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
             payload["cookerId"] = self._device_id
 
         return payload
+
+    async def _async_adjust_running_cook(self, temperature: float) -> None:
+        """Change the running cook's temperature, keeping its other settings."""
+        state = self.coordinator.get_device_state(self._device_id) or {}
+        cook = state.get("cook") if isinstance(state.get("cook"), dict) else {}
+        stages = cook.get("stages") if isinstance(cook.get("stages"), list) else []
+        timer = state.get("nodes", {}).get("timer", {})
+        remaining_s = timer.get("current") if timer.get("mode") == "running" else None
+        try:
+            new_stages = retarget_stages(
+                stages, cook.get("activeStageId"), temperature, remaining_s
+            )
+        except CookValidationError as err:
+            raise ServiceValidationError(str(err)) from err
+        if new_stages is None:
+            # Nothing to preserve (e.g. no stage info yet): simple cook
+            await self._async_start_cook(temperature)
+            return
+        keep_stop = self._device_id in self.coordinator.stop_when_timer_done
+        await self._async_send_stages(new_stages)
+        if keep_stop:
+            self.coordinator.stop_when_timer_done.add(self._device_id)
 
     # --- Entity services -------------------------------------------------
 

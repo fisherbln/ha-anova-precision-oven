@@ -244,3 +244,42 @@ async def test_new_cook_cancels_pending_stop(hass, setup_oven):
         DOMAIN, "start_cook", {"entity_id": CLIMATE, "temperature": 150}, blocking=True
     )
     assert not coordinator.stop_when_timer_done
+
+
+async def test_set_temperature_while_off_is_used_when_turned_on(hass, setup_oven):
+    _, _, ws, _ = setup_oven
+    sent = len(ws.sent)
+    await hass.services.async_call(
+        "climate", "set_temperature", {"entity_id": CLIMATE, "temperature": 200}, blocking=True
+    )
+    assert len(ws.sent) == sent  # nothing sent while off
+    assert hass.states.get(CLIMATE).attributes["temperature"] == 200
+    await hass.services.async_call("climate", "turn_on", {"entity_id": CLIMATE}, blocking=True)
+    stage = ws.sent[-1]["payload"]["payload"]["stages"][0]
+    assert stage["temperatureBulbs"]["dry"]["setpoint"]["celsius"] == 200
+
+
+async def test_set_temperature_while_cooking_keeps_the_cook(hass, setup_oven):
+    from custom_components.anova_precision_oven.cook import build_cook_stages
+
+    _, _, ws, push = setup_oven
+    stages = build_cook_stages(
+        temperature_c=150, heating_elements=["bottom", "rear"], fan_speed=40, duration_s=600
+    )
+    state = idle_state()
+    state["state"]["mode"] = "cook"
+    state["cook"] = {"cookId": "c1", "activeStageId": stages[1]["id"], "stages": stages}
+    state["nodes"]["timer"] = {"mode": "running", "initial": 600, "current": 321}
+    await push(state)
+    await hass.services.async_call(
+        "climate", "set_temperature", {"entity_id": CLIMATE, "temperature": 175}, blocking=True
+    )
+    message = ws.sent[-1]
+    assert message["command"] == "CMD_APO_START"
+    sent_stages = message["payload"]["payload"]["stages"]
+    assert [s["type"] for s in sent_stages] == ["cook"]
+    cook = sent_stages[0]
+    assert cook["temperatureBulbs"]["dry"]["setpoint"]["celsius"] == 175
+    assert cook["heatingElements"]["bottom"] == {"on": True}
+    assert cook["fan"] == {"speed": 40}
+    assert cook["timer"] == {"initial": 321}
