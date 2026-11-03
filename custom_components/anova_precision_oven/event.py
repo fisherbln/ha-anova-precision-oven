@@ -77,16 +77,8 @@ def cook_milestones(state: dict[str, Any]) -> dict[str, Any]:
                 "setpoint_celsius": probe_target,
             }
 
-    # The timer counts down: it waits at `initial` ("idle") until its stage
-    # starts, then runs ("running") toward zero.
-    timer = _get(state, "nodes", "timer") or {}
-    initial = timer.get("initial") or 0
-    timer_mode = timer.get("mode")
-    if initial > 0 and (
-        timer_mode == "completed"
-        or (timer_mode not in (None, "idle") and timer.get("current") == 0)
-    ):
-        reached[EVENT_TIMER_FINISHED] = {"duration_seconds": initial}
+    # timer_finished is tracked by the coordinator (it needs the previous
+    # state); see AnovaOvenCoordinator._track_timer.
 
     return reached
 
@@ -124,12 +116,19 @@ class AnovaOvenCookEvent(AnovaOvenEntity, EventEntity):
         self._primed = False
         self._cooking = False
         self._fired: set[str] = set()
+        self._timers_finished = 0
 
     @callback
     def _handle_coordinator_update(self) -> None:
         state = self.coordinator.get_device_state(self._device_id)
         if state:
             self._process(state)
+            finished = (self.coordinator.devices.get(self._device_id) or {}).get(
+                "timer_finished_count", 0
+            )
+            if finished > self._timers_finished and self._primed:
+                self._fire(EVENT_TIMER_FINISHED, {})
+            self._timers_finished = finished
         super()._handle_coordinator_update()
 
     def _process(self, state: dict[str, Any]) -> None:

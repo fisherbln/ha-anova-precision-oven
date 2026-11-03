@@ -69,9 +69,9 @@ Anova Precision Cooker (APC sous vide circulator). That's a different product wi
 
 | Event type | When |
 |---|---|
-| `preheated` | Bulb temperature is within 1 °C of its setpoint |
+| `preheated` | The oven leaves its preheat stage (or, for a cook without one, reaches within 1 °C of its setpoint) |
 | `probe_target_reached` | Probe temperature reaches its setpoint |
-| `timer_finished` | The cook timer completes |
+| `timer_finished` | A cook timer runs out (the timer resets and the oven keeps heating unless `stop_when_done`) |
 | `cook_ended` | The oven goes back to idle |
 
 A restart mid-cook doesn't re-fire milestones already reached. Trigger on it with `event.received` (or a state trigger on the event entity plus a condition on `event_type`).
@@ -120,6 +120,7 @@ Both actions target the oven's climate entity and **replace any cook in progress
 | `duration` | none | Timer; can't combine with `probe_temperature` |
 | `preheat` | `true` | Adds a preheat stage; the cook stage and its timer start once preheated |
 | `wait_for_start` | `false` | After preheating, wait for a tap on the oven before cooking |
+| `stop_when_done` | `true` | Turn the oven off when the timer ends. The oven itself keeps holding temperature after its timer, so Home Assistant sends the stop (it must be running then) |
 | `title` | `""` | |
 
 ```yaml

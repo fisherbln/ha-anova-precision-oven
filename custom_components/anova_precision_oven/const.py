@@ -54,6 +54,7 @@ ATTR_VENT_OPEN = "vent_open"
 ATTR_RACK_POSITION = "rack_position"
 ATTR_PREHEAT = "preheat"
 ATTR_WAIT_FOR_START = "wait_for_start"
+ATTR_STOP_WHEN_DONE = "stop_when_done"
 ATTR_TITLE = "title"
 ATTR_STAGES = "stages"
 

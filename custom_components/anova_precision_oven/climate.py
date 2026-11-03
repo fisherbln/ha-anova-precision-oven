@@ -27,6 +27,7 @@ from .const import (
     ATTR_RACK_POSITION,
     ATTR_STAGES,
     ATTR_STEAM,
+    ATTR_STOP_WHEN_DONE,
     ATTR_TITLE,
     ATTR_VENT_OPEN,
     ATTR_WAIT_FOR_START,
@@ -259,6 +260,7 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
 
         payload = self._create_cook_payload(temperature, device_type)
 
+        self.coordinator.stop_when_timer_done.discard(self._device_id)
         await self.coordinator.send_command(self._device_id, CMD_APO_START, payload)
         await self.coordinator.async_request_refresh()
 
@@ -327,6 +329,8 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
         )
 
     async def _async_send_stages(self, stages: list[dict[str, Any]]) -> None:
+        # A new cook replaces any stop-after-timer request from the last one
+        self.coordinator.stop_when_timer_done.discard(self._device_id)
         payload = build_start_payload(stages, self._device_id, self._device_type())
         await self.coordinator.send_command(self._device_id, CMD_APO_START, payload)
         await self.coordinator.async_request_refresh()
@@ -359,6 +363,8 @@ class AnovaOvenClimate(AnovaOvenEntity, ClimateEntity):
         except CookValidationError as err:
             raise ServiceValidationError(str(err)) from err
         await self._async_send_stages(stages)
+        if duration and kwargs.get(ATTR_STOP_WHEN_DONE, True):
+            self.coordinator.stop_when_timer_done.add(self._device_id)
 
     async def async_start_custom_cook(self, **kwargs: Any) -> None:
         """Start a cook from raw stages (e.g. copied from the cook session sensor)."""

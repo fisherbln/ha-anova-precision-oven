@@ -57,7 +57,7 @@
         },
         "duration": {
           "name": "Timer",
-          "description": "Cook timer. Starts once preheated when preheat is on. Can't be combined with a probe target."
+          "description": "Cook timer. Starts once preheated when preheat is on. Can't be combined with a probe target. The oven keeps heating when it ends unless Stop when done is on."
         },
         "preheat": {
           "name": "Preheat",
@@ -70,6 +70,10 @@
         "title": {
           "name": "Title",
           "description": "Optional name for the cook."
+        },
+        "stop_when_done": {
+          "name": "Stop when done",
+          "description": "Turn the oven off when the timer ends (Home Assistant sends the stop, so it needs to be running then). Without this the oven holds its temperature."
         }
       }
     },

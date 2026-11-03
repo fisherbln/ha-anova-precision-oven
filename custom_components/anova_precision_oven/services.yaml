@@ -79,6 +79,10 @@ start_cook:
       default: false
       selector:
         boolean:
+    stop_when_done:
+      default: true
+      selector:
+        boolean:
     title:
       selector:
         text:

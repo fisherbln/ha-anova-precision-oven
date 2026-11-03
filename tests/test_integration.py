@@ -149,7 +149,11 @@ async def test_cook_events_fire_once(hass, setup_oven):
     await push(cooking)
     assert hass.states.get(event_id).attributes["event_type"] == "probe_target_reached"
 
-    cooking["nodes"]["timer"] = {"mode": "running", "initial": 120, "current": 0}
+    # Real v1 behavior: at zero the timer resets to idle 0/0 and the oven keeps
+    # holding temperature.
+    cooking["nodes"]["timer"] = {"mode": "running", "initial": 120, "current": 3}
+    await push(cooking)
+    cooking["nodes"]["timer"] = {"mode": "idle", "initial": 0, "current": 0}
     await push(cooking)
     assert hass.states.get(event_id).attributes["event_type"] == "timer_finished"
 
@@ -190,3 +194,42 @@ async def test_lamp_and_stop_still_work(hass, setup_oven):
     assert ws.sent[-1]["command"] == "CMD_APO_SET_LAMP"
     await hass.services.async_call("climate", "turn_off", {"entity_id": CLIMATE}, blocking=True)
     assert ws.sent[-1]["command"] == "CMD_APO_STOP"
+
+
+def _timer_state(timer_mode: str, current: int, initial: int = 120):
+    state = idle_state()
+    state["state"]["mode"] = "cook"
+    state["cook"] = {"cookId": "c1", "activeStageId": "s2", "stages": [{"id": "s2", "type": "cook"}]}
+    state["nodes"]["timer"] = {"mode": timer_mode, "initial": initial, "current": current}
+    return state
+
+
+@pytest.mark.parametrize(("stop_when_done", "expect_stop"), [(True, True), (False, False)])
+async def test_stop_when_done(hass, setup_oven, stop_when_done, expect_stop):
+    _, _, ws, push = setup_oven
+    await hass.services.async_call(
+        DOMAIN,
+        "start_cook",
+        {"entity_id": CLIMATE, "temperature": 150, "duration": 120, "stop_when_done": stop_when_done},
+        blocking=True,
+    )
+    sent_before = len(ws.sent)
+    await push(_timer_state("idle", 120))
+    await push(_timer_state("running", 5))
+    assert len(ws.sent) == sent_before
+    await push(_timer_state("idle", 0, initial=0))
+    await hass.async_block_till_done()
+    stops = [m for m in ws.sent[sent_before:] if m["command"] == "CMD_APO_STOP"]
+    assert bool(stops) is expect_stop
+
+
+async def test_new_cook_cancels_pending_stop(hass, setup_oven):
+    _, coordinator, _, _ = setup_oven
+    await hass.services.async_call(
+        DOMAIN, "start_cook", {"entity_id": CLIMATE, "temperature": 150, "duration": 60}, blocking=True
+    )
+    assert coordinator.stop_when_timer_done
+    await hass.services.async_call(
+        DOMAIN, "start_cook", {"entity_id": CLIMATE, "temperature": 150}, blocking=True
+    )
+    assert not coordinator.stop_when_timer_done

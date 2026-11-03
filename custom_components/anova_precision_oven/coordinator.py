@@ -20,6 +20,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import (
     ACCESSORIES_APO,
+    CMD_APO_STOP,
     DOMAIN,
     EVENT_APO_STATE,
     EVENT_APO_WIFI_LIST,
@@ -109,6 +110,8 @@ class AnovaOvenCoordinator(DataUpdateCoordinator):
         self._listen_task = None
         self._ssl_context: ssl.SSLContext | None = None
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        # Devices whose running cook should be stopped when its timer ends
+        self.stop_when_timer_done: set[str] = set()
 
         self._log_filter = _TokenRedactFilter(token)
         for name in _INTEGRATION_LOGGER_NAMES:
@@ -310,6 +313,8 @@ class AnovaOvenCoordinator(DataUpdateCoordinator):
                     _LOGGER.warning("Invalid state format for device %s", device_id)
                     return
 
+                previous = self.devices[device_id].get("state") or {}
+                self._track_timer(device_id, previous, actual_state)
                 self.devices[device_id]["state"] = actual_state
                 self.async_set_updated_data(self.devices)
 
@@ -320,6 +325,36 @@ class AnovaOvenCoordinator(DataUpdateCoordinator):
                 "Error handling WebSocket message: %s", type(err).__name__
             )
             _LOGGER.debug("Message handling error details", exc_info=True)
+
+    def _track_timer(
+        self, device_id: str, previous: dict[str, Any], current: dict[str, Any]
+    ) -> None:
+        """Count finished timers and stop the oven afterwards if asked to.
+
+        The oven's timer counts down while "running" and then resets to idle
+        without reporting "completed", and the cook keeps heating, so a
+        finished timer is a running timer that stops running mid-cook.
+        """
+        device = self.devices[device_id]
+        mode = (current.get("state") or {}).get("mode")
+        if mode in (None, "idle"):
+            self.stop_when_timer_done.discard(device_id)
+            return
+        was = ((previous.get("nodes") or {}).get("timer") or {}).get("mode")
+        now = ((current.get("nodes") or {}).get("timer") or {}).get("mode")
+        if was != "running" or now in ("running", "paused"):
+            return
+        device["timer_finished_count"] = device.get("timer_finished_count", 0) + 1
+        if device_id in self.stop_when_timer_done:
+            self.stop_when_timer_done.discard(device_id)
+            self.hass.async_create_task(self._async_stop_after_timer(device_id))
+
+    async def _async_stop_after_timer(self, device_id: str) -> None:
+        _LOGGER.info("Timer finished; stopping the oven as requested")
+        try:
+            await self.send_command(device_id, CMD_APO_STOP)
+        except Exception as err:  # noqa: BLE001 - logged for the user
+            _LOGGER.error("Could not stop the oven after its timer: %s", err)
 
     def _handle_response(self, data: dict[str, Any]) -> None:
         """Resolve the pending command a RESPONSE message answers."""
