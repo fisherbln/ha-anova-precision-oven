@@ -23,3 +23,13 @@ async def test_rejected_token_logs_auth_failure(hass, caplog):
     assert "Authentication failed (401)" in caplog.text
     assert "anova-bad" not in caplog.text
     await coordinator.stop_websocket()
+
+
+def test_redact_filter_handles_a_lone_mapping_argument():
+    import logging
+
+    from custom_components.anova_precision_oven.coordinator import _TokenRedactFilter
+
+    record = logging.LogRecord("x", logging.DEBUG, __file__, 1, "data %(a)s", ({"a": "anova-secret"},), None)
+    assert _TokenRedactFilter("anova-secret").filter(record)
+    assert record.getMessage() == "data [REDACTED]"

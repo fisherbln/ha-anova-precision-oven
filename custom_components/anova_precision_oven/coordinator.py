@@ -70,11 +70,19 @@ class _TokenRedactFilter(logging.Filter):
         try:
             if isinstance(record.msg, str) and token in record.msg:
                 record.msg = record.msg.replace(token, _REDACTED)
-            if record.args:
+            if isinstance(record.args, tuple):
                 record.args = tuple(
                     arg.replace(token, _REDACTED) if isinstance(arg, str) else arg
                     for arg in record.args
                 )
+            elif isinstance(record.args, dict):
+                # logging passes a lone mapping argument through as a dict
+                record.args = {
+                    key: value.replace(token, _REDACTED)
+                    if isinstance(value, str)
+                    else value
+                    for key, value in record.args.items()
+                }
         except Exception:
             pass
         return True
@@ -315,7 +323,7 @@ class AnovaOvenCoordinator(DataUpdateCoordinator):
 
     def _handle_response(self, data: dict[str, Any]) -> None:
         """Resolve the pending command a RESPONSE message answers."""
-        _LOGGER.debug("Command response: %s", data)
+        _LOGGER.debug("Command response: %s", json.dumps(data))
         request_id = data.get("requestId")
         future = self._pending.get(request_id) if request_id else None
         if future is None and len(self._pending) == 1:
